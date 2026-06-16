@@ -1,0 +1,148 @@
+name: Sync fork with upstream (preserve passkey-proxy patch)
+
+on:
+  schedule:
+    # Daily at 10:00 UTC (02:00 PST / 03:00 PDT)
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout fork branch
+        uses: actions/checkout@v4
+        with:
+          ref: xrvk/passkey-proxy-prebuilt
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure git identity
+        run: |
+          git config user.name "xrvk-sync-bot"
+          git config user.email "39322180+xrvk@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/bitwarden/clients.git
+          git fetch upstream main --no-tags
+
+      - name: Skip if already up to date
+        id: check
+        run: |
+          BEHIND=$(git rev-list --left-right --count HEAD...upstream/main | awk '{print $2}')
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          if [ "$BEHIND" = "0" ]; then
+            echo "Already up to date with upstream/main."
+          fi
+
+      - name: Merge upstream/main
+        if: steps.check.outputs.behind != '0'
+        id: merge
+        run: |
+          set -e
+          if ! git merge --no-edit --no-ff upstream/main; then
+            echo "merge_conflict=1" >> "$GITHUB_OUTPUT"
+            git merge --abort || true
+            exit 1
+          fi
+
+      - name: Verify proxy flags still default to true
+        if: steps.check.outputs.behind != '0'
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = "libs/common/src/enums/feature-flag.enum.ts";
+            if (!fs.existsSync(path)) {
+              console.error("feature-flag.enum.ts moved or deleted upstream — manual review required.");
+              process.exit(1);
+            }
+            const src = fs.readFileSync(path, "utf8");
+            const checks = [
+              { re: /\[FeatureFlag\.UseWebAuthenticationProxy\]:\s*true/, msg: "UseWebAuthenticationProxy default" },
+              { re: /\[FeatureFlag\.BiometricsSDKIPC\]:\s*true/, msg: "BiometricsSDKIPC default" },
+            ];
+            const failed = checks.filter((c) => !c.re.test(src));
+            if (failed.length > 0) {
+              console.error("Patch verification failed:");
+              for (const f of failed) console.error(" - " + f.msg);
+              process.exit(1);
+            }
+            console.log("Patch defaults still in place.");
+          '
+
+      - name: Verify proxy source files are present
+        if: steps.check.outputs.behind != '0'
+        run: |
+          set -e
+          required=(
+            "apps/browser/src/autofill/fido2/background/fido2-webauthn-proxy.background.ts"
+            "apps/browser/src/autofill/fido2/background/fido2-page-script-fallback-tracker.ts"
+            "apps/browser/src/autofill/fido2/utils/webauthn-json-utils.ts"
+            ".github/workflows/build-passkey-proxy-prebuilt.yml"
+          )
+          missing=0
+          for f in "${required[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "missing: $f"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Required passkey-proxy file(s) gone after merge — bailing."
+            exit 1
+          fi
+
+      - name: Verify webAuthenticationProxy still in Chrome manifest
+        if: steps.check.outputs.behind != '0'
+        run: |
+          node -e '
+            const m = require("./apps/browser/src/manifest.v3.json");
+            const perms = m.permissions || [];
+            if (!perms.includes("webAuthenticationProxy")) {
+              console.error("manifest.v3.json no longer declares webAuthenticationProxy");
+              process.exit(1);
+            }
+            console.log("manifest.v3.json OK");
+          '
+
+      - name: Push merged branch
+        if: steps.check.outputs.behind != '0'
+        run: git push origin HEAD:xrvk/passkey-proxy-prebuilt
+
+      - name: Open issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `Upstream sync failed for xrvk/passkey-proxy-prebuilt`;
+            const body = [
+              `Automated upstream sync failed on ${new Date().toISOString()}.`,
+              ``,
+              `Run: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+              ``,
+              `Likely causes:`,
+              `- Merge conflict with upstream changes`,
+              `- Patch verification failed (proxy flag defaults reverted, or source files moved)`,
+              ``,
+              `Manual rebase / patch reapply required.`,
+            ].join("\n");
+            const { data: existing } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${process.env.GITHUB_REPOSITORY} is:issue is:open in:title "${title}"`,
+            });
+            if (existing.total_count === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+              });
+            }
