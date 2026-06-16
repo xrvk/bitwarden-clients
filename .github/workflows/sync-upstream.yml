@@ -2,8 +2,8 @@ name: Sync fork with upstream (preserve passkey-proxy patch)
 
 on:
   schedule:
-    # Daily at 14:00 UTC
-    - cron: "0 14 * * *"
+    # Daily at 10:00 UTC (02:00 PST / 03:00 PDT)
+    - cron: "0 10 * * *"
   workflow_dispatch:
 
 permissions:
