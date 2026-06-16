@@ -144,7 +144,7 @@ export const DefaultFeatureFlagValue = {
   [FeatureFlag.UseUndeterminedCipherScenarioTriggeringLogic]: FALSE,
   [FeatureFlag.MacOsNativeCredentialSync]: FALSE,
   [FeatureFlag.EnableAutofillTriage]: FALSE,
-  [FeatureFlag.UseWebAuthenticationProxy]: FALSE,
+  [FeatureFlag.UseWebAuthenticationProxy]: true,
   [FeatureFlag.PM31039ItemActionInExtension]: FALSE,
 
   /* Desktop Native */
@@ -217,7 +217,7 @@ export const DefaultFeatureFlagValue = {
   [FeatureFlag.EnableAccountEncryptionV2JitPasswordRegistration]: FALSE,
   [FeatureFlag.UnlockKeyConnectorWithSdk]: FALSE,
   [FeatureFlag.SdkKeyConnectorMigration]: FALSE,
-  [FeatureFlag.BiometricsSDKIPC]: FALSE,
+  [FeatureFlag.BiometricsSDKIPC]: true,
 
   /* Platform */
   [FeatureFlag.FedRampGovRegion]: FALSE,
